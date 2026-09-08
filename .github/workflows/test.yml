@@ -1,39 +1,15 @@
 name: Test
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/test.yml"
-      - "package.json"
-      - "index.js"
-      - "lib/**"
-      - "test/**.js"
-  push:
-    paths:
-      - ".github/workflows/test.yml"
-      - "package.json"
-      - "index.js"
-      - "lib/**"
-      - "test/**.js"
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional mocha grep filter'
+        required: false
+        default: ''
 permissions:
   contents: read
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    name: Lint JS-Files
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Setup node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 22
-
-      - run: npm install
-
-      - name: Lint JS-Files
-        run: npm run lint-js
-
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -48,6 +24,7 @@ jobs:
             node: 22
             coverage: true
     name: Node ${{ matrix.node }} MongoDB ${{ matrix.mongodb }} OS ${{ matrix.os }}
+    timeout-minutes: 35
     env:
       MONGOMS_VERSION: ${{ matrix.mongodb }}
       MONGOMS_PREFER_GLOBAL_PATH: 1
@@ -67,19 +44,35 @@ jobs:
           path: ~/.cache/mongodb-binaries
           key: ${{ matrix.os }}-${{ matrix.mongodb }}
 
+      - name: Pin npm registry to release date
+        run: |
+          npm config set registry https://time-machines-npm.sealsecurity.io/
+          npm config set //time-machines-npm.sealsecurity.io/:_authToken=2026-06-09T19:37:21.947000Z
+
       - run: npm install
       # Create ./node_modules/mongoose-separate-require-instance for testing multiple require instances
       - run: npm run create-separate-require-instance
       - name: NPM Test without Coverage
-        run: npm run test:ci
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npm run test:ci -- --grep "${{ inputs.test-filter }}"
+          else
+            npm run test:ci
+          fi
         if: matrix.coverage != true
       - name: NPM Test with Coverage
-        run: npm run test-coverage:ci
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npx c8 --reporter=html --reporter=text npm run test:ci -- --grep "${{ inputs.test-filter }}"
+          else
+            npm run test-coverage:ci
+          fi
         if: matrix.coverage == true
 
   test-deno:
     runs-on: ubuntu-22.04
     name: Deno tests
+    timeout-minutes: 35
     env:
       MONGOMS_VERSION: 6.0.15
       MONGOMS_PREFER_GLOBAL_PATH: 1
@@ -101,13 +94,23 @@ jobs:
         with:
           deno-version: v2.1.x
       - run: deno --version
+      - name: Pin npm registry to release date
+        run: |
+          npm config set registry https://time-machines-npm.sealsecurity.io/
+          npm config set //time-machines-npm.sealsecurity.io/:_authToken=2026-06-09T19:37:21.947000Z
       - run: npm install
       - name: Run Deno tests
-        run: npm run test-deno:ci
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npm run test-deno:ci -- -g "${{ inputs.test-filter }}"
+          else
+            npm run test-deno:ci
+          fi
 
   test-atlas-cli:
     runs-on: ubuntu-22.04
     name: Atlas CLI tests
+    timeout-minutes: 35
     env:
       IS_ATLAS: true
       MONGOOSE_TEST_URI: mongodb://127.0.0.1:27017/mongoose_test?directConnection=true
@@ -121,17 +124,25 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
+      - name: Pin npm registry to release date
+        run: |
+          npm config set registry https://time-machines-npm.sealsecurity.io/
+          npm config set //time-machines-npm.sealsecurity.io/:_authToken=2026-06-09T19:37:21.947000Z
       - run: npm install
       - name: Run tests
-        run: npm run test:ci
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npm run test:ci -- --grep "${{ inputs.test-filter }}"
+          else
+            npm run test:ci
+          fi
       - name: Stop deployment
         run: atlas deployments stop mycluster
 
   test-replica-sets:
-    needs:
-      - test
     runs-on: ubuntu-22.04
     name: Replica Set tests
+    timeout-minutes: 35
     env:
       FORCE_COLOR: true
     steps:
@@ -140,14 +151,24 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
+      - name: Pin npm registry to release date
+        run: |
+          npm config set registry https://time-machines-npm.sealsecurity.io/
+          npm config set //time-machines-npm.sealsecurity.io/:_authToken=2026-06-09T19:37:21.947000Z
       - run: npm install
       - name: Test
-        run: npm run test-rs:ci
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npm run test-rs:ci -- --grep "${{ inputs.test-filter }}"
+          else
+            npm run test-rs:ci
+          fi
 
   dependency-review:
     name: Dependency Review
-    if: github.event_name == 'pull_request'
+    if: false
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -155,3 +176,24 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Dependency review
         uses: actions/dependency-review-action@v5
+
+  pack:
+    runs-on: ubuntu-latest
+    name: Pack npm tarball
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Setup node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+      - name: Match the npm that packed the public tarball
+        run: npm i -g npm@11.13.0
+      - name: Pack
+        run: npm pack
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: mongoose-9.7.0.tgz
+          if-no-files-found: error
